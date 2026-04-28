@@ -6,15 +6,12 @@
   <title>FRC Match Timer</title>
   <style>
     :root {
-      --blue: #1a3afe;
-      --red: #d40000;
+      --blue:   #1a3afe;
+      --red:    #d40000;
+      --purple: #8800cc;
     }
 
-    *, *::before, *::after {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     html, body {
       width: 100%;
@@ -31,7 +28,6 @@
       justify-content: center;
       height: 100vh;
       width: 100vw;
-      padding-top: 8vh;
     }
 
     #timer {
@@ -40,7 +36,7 @@
       color: #ffffff;
       letter-spacing: 0.05em;
       line-height: 1;
-      text-shadow: 0 4px 40px rgba(0, 0, 0, 0.4);
+      text-shadow: 0 4px 40px rgba(0,0,0,0.4);
       font-variant-numeric: tabular-nums;
     }
 
@@ -52,7 +48,7 @@
       margin-top: 1rem;
       min-height: 1.2em;
       text-align: center;
-      text-shadow: 0 2px 20px rgba(0, 0, 0, 0.4);
+      text-shadow: 0 2px 20px rgba(0,0,0,0.4);
     }
 
     #hint {
@@ -61,10 +57,9 @@
       width: 100%;
       text-align: center;
       font-size: clamp(14px, 2vw, 28px);
-      color: rgba(255, 255, 255, 0.7);
+      color: rgba(255,255,255,0.7);
       letter-spacing: 0.15em;
     }
-
     #hint.hidden { display: none; }
 
     #shift-indicator {
@@ -74,54 +69,42 @@
       text-align: center;
       font-size: clamp(16px, 2.5vw, 32px);
       font-weight: 700;
-      color: rgba(255, 255, 255, 0.85);
+      color: rgba(255,255,255,0.85);
       letter-spacing: 0.15em;
     }
-
     #shift-indicator.hidden { display: none; }
-
-    #session-timer {
-      position: fixed;
-      top: 1.5rem;
-      right: 2rem;
-      padding: 0.6rem 1.1rem;
-      border: 2px solid rgba(255, 255, 255, 0.85);
-      border-radius: 0.4rem;
-      color: rgba(255, 255, 255, 0.85);
-      text-align: center;
-      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
-    }
-
-    #session-timer .session-time {
-      font-size: clamp(29px, 3.6vw, 47px);
-      font-weight: 900;
-      letter-spacing: 0.05em;
-      line-height: 1;
-    }
-
-    #session-timer .session-label {
-      font-size: clamp(14px, 1.6vw, 21px);
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      margin-top: 0.3rem;
-      opacity: 0.8;
-    }
-
-    #session-timer.hidden { display: none; }
 
     #conn-dot {
       position: fixed;
       top: 1.5rem;
       left: 2rem;
       font-size: clamp(12px, 1.5vw, 20px);
-      color: rgba(255, 255, 255, 0.4);
+      color: rgba(255,255,255,0.4);
       letter-spacing: 0.1em;
     }
 
-    body.estop-active {
-      animation: estop-flash 0.5s infinite;
+    #qr-panel {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      background: #fff;
+      padding: 8px 8px 6px 8px;
+      border-radius: 6px;
+      text-align: center;
+      opacity: 0.88;
+    }
+    #qr-panel.hidden { display: none; }
+
+    #qr-id {
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      font-weight: 900;
+      color: #000;
+      letter-spacing: 0.18em;
+      margin-top: 4px;
     }
 
+    body.estop-active { animation: estop-flash 0.5s infinite; }
     @keyframes estop-flash {
       0%, 100% { background-color: #cc2200; }
       50%       { background-color: #440000; }
@@ -133,23 +116,31 @@
     <div id="timer">--:--</div>
     <div id="label">CONNECTING...</div>
   </div>
-  <div id="session-timer" class="hidden"></div>
   <div id="hint" class="hidden"></div>
   <div id="shift-indicator" class="hidden"></div>
   <div id="conn-dot">●</div>
+  <div id="qr-panel" class="hidden">
+    <img id="qr-img" width="120" height="120" alt="QR">
+    <div id="qr-id"></div>
+  </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
   <script>
     const timerEl = document.getElementById('timer');
     const labelEl = document.getElementById('label');
-    const hintEl = document.getElementById('hint');
+    const hintEl  = document.getElementById('hint');
     const shiftEl = document.getElementById('shift-indicator');
     const connDot = document.getElementById('conn-dot');
+    const qrPanel = document.getElementById('qr-panel');
+    const qrImg   = document.getElementById('qr-img');
+    const qrIdEl  = document.getElementById('qr-id');
 
-    // Sounds
     const sounds = {
-      start: new Audio('/sounds/CHARGE.wav'),
-      warn: new Audio('/sounds/WARNEOM.wav'),
-      end: new Audio('/sounds/ENDMATCH.wav'),
+      autoStart:   new Audio('/sounds/CHARGE.wav'),
+      autoEnd:     new Audio('/sounds/ENDMATCH.wav'),
+      teleopStart: new Audio('/sounds/3BELLS.wav'),
+      warn:        new Audio('/sounds/WARNEOM.wav'),
+      end:         new Audio('/sounds/ENDMATCH.wav'),
       shiftChange: new Audio('/sounds/PowerUp_LinearPop.wav'),
     };
     Object.values(sounds).forEach(a => { a.preload = 'auto'; });
@@ -162,7 +153,6 @@
     }
 
     let audioCtx = null;
-
     function getAudioCtx() {
       if (!audioCtx) audioCtx = new AudioContext();
       return audioCtx;
@@ -170,7 +160,7 @@
 
     function playFoghorn() {
       const ctx = getAudioCtx();
-      const osc = ctx.createOscillator();
+      const osc  = ctx.createOscillator();
       const gain = ctx.createGain();
       const t = ctx.currentTime;
       osc.type = 'sawtooth';
@@ -191,56 +181,73 @@
     }, { once: true });
 
     function formatTime(s) {
-      const m = Math.floor(s / 60);
-      const sec = s % 60;
-      return `${m}:${String(sec).padStart(2, '0')}`;
+      return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
     }
 
-    function applyBg(color) {
+    function applyBg(shift) {
       document.body.classList.remove('estop-active');
-      document.body.style.backgroundColor = color === 'red' ? '#d40000' : '#1a3afe';
+      const map = { red: '#d40000', blue: '#1a3afe', purple: '#8800cc' };
+      document.body.style.backgroundColor = map[shift] ?? '#1a3afe';
     }
 
     function handleState(msg) {
       if (msg.type !== 'state') return;
-      const { state, remaining, shift, nextShiftIn, events, config } = msg;
+      const { period, remaining, shift, isEndgame, nextChangeIn, events } = msg;
 
       for (const ev of events) {
-        switch (ev) {
-          case 'start':      playSound('start'); break;
-          case 'warn':       playSound('warn'); break;
-          case 'end':        playSound('end'); break;
-          case 'shiftChange': playSound('shiftChange'); break;
-          case 'estop':      playFoghorn(); break;
-        }
+        if (ev === 'autoStart')   playSound('autoStart');
+        if (ev === 'autoEnd')     playSound('autoEnd');
+        if (ev === 'teleopStart') playSound('teleopStart');
+        if (ev === 'warn')        playSound('warn');
+        if (ev === 'end')         playSound('end');
+        if (ev === 'shiftChange') playSound('shiftChange');
+        if (ev === 'estop')       playFoghorn();
       }
 
       timerEl.textContent = formatTime(remaining);
 
-      switch (state) {
+      switch (period) {
         case 'idle':
-          applyBg('blue');
+          applyBg(null);
           labelEl.textContent = '';
           hintEl.textContent = 'WAITING FOR CONTROL';
           hintEl.classList.remove('hidden');
           shiftEl.classList.add('hidden');
           break;
 
-        case 'running':
-          applyBg(shift || 'blue');
-          labelEl.textContent = remaining <= 30 ? 'ENDGAME' : '';
+        case 'auto':
+          applyBg(null);
+          labelEl.textContent = 'AUTO';
           hintEl.classList.add('hidden');
-          if (config.shiftTime > 0 && shift) {
-            const countdown = nextShiftIn != null ? ` — ${nextShiftIn}s` : '';
-            shiftEl.textContent = `${shift.toUpperCase()} SHIFT IS ACTIVE${countdown}`;
-            shiftEl.classList.remove('hidden');
-          } else {
+          shiftEl.classList.add('hidden');
+          break;
+
+        case 'delay':
+          applyBg(null);
+          labelEl.textContent = 'DELAY';
+          hintEl.classList.add('hidden');
+          shiftEl.classList.add('hidden');
+          break;
+
+        case 'teleop':
+          applyBg(shift);
+          hintEl.classList.add('hidden');
+          if (shift === 'purple') {
+            labelEl.textContent = 'TRANSITION';
             shiftEl.classList.add('hidden');
+          } else if (isEndgame) {
+            labelEl.textContent = 'ENDGAME';
+            shiftEl.classList.add('hidden');
+          } else {
+            labelEl.textContent = '';
+            const cd = nextChangeIn != null ? ` — ${nextChangeIn}s` : '';
+            shiftEl.textContent = `${(shift ?? 'BLUE').toUpperCase()} SHIFT IS ACTIVE${cd}`;
+            shiftEl.classList.remove('hidden');
           }
           break;
 
         case 'end_hold':
-          applyBg(shift || 'blue');
+          applyBg(shift);
           labelEl.textContent = 'MATCH OVER';
           hintEl.classList.add('hidden');
           shiftEl.classList.add('hidden');
@@ -256,15 +263,35 @@
       }
     }
 
-    // WebSocket with auto-reconnect
-    function connect() {
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${proto}//${location.host}/ws`);
+    function setupQR(id) {
+      if (typeof QRCode === 'undefined') { setTimeout(() => setupQR(id), 100); return; }
+      const url = `https://timer.filipkin.com/control?id=${id}`;
+      QRCode.toDataURL(url, { width: 120, margin: 1 }, function(err, dataUrl) {
+        if (!err) {
+          qrImg.src = dataUrl;
+          qrIdEl.textContent = id.toUpperCase();
+          qrPanel.classList.remove('hidden');
+        }
+      });
+    }
 
-      ws.onopen = () => {
-        connDot.style.color = 'rgba(255,255,255,0.4)';
+    function connect() {
+      const storedId = localStorage.getItem('timerId');
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const params = new URLSearchParams({ role: 'display' });
+      if (storedId) params.set('id', storedId);
+      const ws = new WebSocket(`${proto}//${location.host}/ws?${params}`);
+
+      ws.onopen = () => { connDot.style.color = 'rgba(255,255,255,0.4)'; };
+      ws.onmessage = e => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'registered') {
+          localStorage.setItem('timerId', msg.id);
+          setupQR(msg.id);
+        } else {
+          handleState(msg);
+        }
       };
-      ws.onmessage = e => handleState(JSON.parse(e.data));
       ws.onclose = () => {
         connDot.style.color = 'rgba(255,100,100,0.8)';
         setTimeout(connect, 2000);
@@ -273,49 +300,6 @@
     }
 
     connect();
-
-    // Session timer
-    const SESSIONS = [
-      { label: 'Session 1', start: [10, 30], end: [10, 50] },
-      { label: 'Session 2', start: [11,  0], end: [11, 20] },
-      { label: 'Session 3', start: [12, 30], end: [12, 50] },
-      { label: 'Session 4', starts: [13, 0], end: [13, 20] }
-    ];
-
-    const sessionEl = document.getElementById('session-timer');
-
-    function todayMs(h, m) {
-      const d = new Date();
-      d.setHours(h, m, 0, 0);
-      return d.getTime();
-    }
-
-    function fmtCd(s) {
-      if (s <= 0) return '0:00';
-      return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-    }
-
-    function tickSession() {
-      const now = Date.now();
-      for (let i = 0; i < SESSIONS.length; i++) {
-        const s = todayMs(...SESSIONS[i].start);
-        const e = todayMs(...SESSIONS[i].end);
-        if (now < s) {
-          sessionEl.innerHTML = `<div class="session-time">${fmtCd(Math.round((s - now) / 1000))}</div><div class="session-label">${i === 0 ? 'UNTIL SESSION 1' : 'UNTIL NEXT SESSION'}</div>`;
-          sessionEl.classList.remove('hidden');
-          return;
-        }
-        if (now < e) {
-          sessionEl.innerHTML = `<div class="session-time">${fmtCd(Math.round((e - now) / 1000))}</div><div class="session-label">${SESSIONS[i].label.toUpperCase()}</div>`;
-          sessionEl.classList.remove('hidden');
-          return;
-        }
-      }
-      sessionEl.classList.add('hidden');
-    }
-
-    setInterval(tickSession, 1000);
-    tickSession();
   </script>
 </body>
 </html>
