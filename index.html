@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FRC Match Timer</title>
+  <style>
+    :root {
+      --blue: #1a3afe;
+      --red: #d40000;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Courier New', 'Consolas', monospace;
+      background-color: var(--blue);
+    }
+
+    #container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      width: 100vw;
+      padding-top: 8vh;
+    }
+
+    #timer {
+      font-size: clamp(100px, 28vw, 320px);
+      font-weight: 900;
+      color: #ffffff;
+      letter-spacing: 0.05em;
+      line-height: 1;
+      text-shadow: 0 4px 40px rgba(0, 0, 0, 0.4);
+      font-variant-numeric: tabular-nums;
+    }
+
+    #label {
+      font-size: clamp(24px, 5vw, 72px);
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: 0.2em;
+      margin-top: 1rem;
+      min-height: 1.2em;
+      text-align: center;
+      text-shadow: 0 2px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    #hint {
+      position: fixed;
+      bottom: 2rem;
+      width: 100%;
+      text-align: center;
+      font-size: clamp(14px, 2vw, 28px);
+      color: rgba(255, 255, 255, 0.7);
+      letter-spacing: 0.15em;
+    }
+
+    #hint.hidden {
+      display: none;
+    }
+
+    #shift-indicator {
+      position: fixed;
+      bottom: 2rem;
+      width: 100%;
+      text-align: center;
+      font-size: clamp(16px, 2.5vw, 32px);
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.85);
+      letter-spacing: 0.15em;
+    }
+
+    #shift-indicator.hidden {
+      display: none;
+    }
+
+    #session-timer {
+      position: fixed;
+      top: 1.5rem;
+      right: 2rem;
+      padding: 0.6rem 1.1rem;
+      border: 2px solid rgba(255, 255, 255, 0.85);
+      border-radius: 0.4rem;
+      color: rgba(255, 255, 255, 0.85);
+      text-align: center;
+      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+    }
+
+    #session-timer .session-time {
+      font-size: clamp(29px, 3.6vw, 47px);
+      font-weight: 900;
+      letter-spacing: 0.05em;
+      line-height: 1;
+    }
+
+    #session-timer .session-label {
+      font-size: clamp(14px, 1.6vw, 21px);
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      margin-top: 0.3rem;
+      opacity: 0.8;
+    }
+
+    #session-timer.hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="timer">2:30</div>
+    <div id="label"></div>
+  </div>
+  <div id="session-timer"></div>
+  <div id="hint">PRESS ENTER TO START</div>
+  <div id="shift-indicator" class="hidden"></div>
+
+  <script>
+    const STATES = { IDLE: 'idle', RUNNING: 'running', END_HOLD: 'end_hold' };
+
+    // --- URL param parsing ---
+
+    function parseDuration(str) {
+      if (!str) return 150;
+      let m = str.match(/^(\d+)m(\d+)s$/i);
+      if (m) return parseInt(m[1]) * 60 + parseInt(m[2]);
+      m = str.match(/^(\d+)m$/i);
+      if (m) return parseInt(m[1]) * 60;
+      m = str.match(/^(\d+)s$/i);
+      if (m) return parseInt(m[1]);
+      const n = parseInt(str, 10);
+      if (!isNaN(n) && n > 0) return n;
+      return 150;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const totalTime = parseDuration(params.get('t'));
+    const shiftParam = params.get('shifts') ?? params.get('shift');
+    const shiftPeriod = shiftParam ? Math.max(1, parseInt(shiftParam, 10)) : null;
+
+    // --- State ---
+
+    let state = STATES.IDLE;
+    let remaining = totalTime;
+    let firstColor = 'blue';
+    let lastShiftColor = null;
+    let tickInterval = null;
+    let endHoldTimeout = null;
+
+    // --- DOM refs ---
+
+    const timerEl = document.getElementById('timer');
+    const labelEl = document.getElementById('label');
+    const hintEl = document.getElementById('hint');
+    const shiftIndicatorEl = document.getElementById('shift-indicator');
+
+    // --- Sounds ---
+
+    const sounds = {
+      start:      new Audio('sounds/CHARGE.wav'),
+      warn:       new Audio('sounds/WARNEOM.wav'),
+      end:        new Audio('sounds/ENDMATCH.wav'),
+      shiftChange: new Audio('sounds/PowerUp_LinearPop.wav'),
+    };
+    Object.values(sounds).forEach(a => { a.preload = 'auto'; });
+
+    function playSound(audio) {
+      audio.currentTime = 0;
+      audio.play().catch(() => {});
+    }
+
+    // --- Helpers ---
+
+    function formatTime(s) {
+      const m = Math.floor(s / 60);
+      const sec = s % 60;
+      return `${m}:${String(sec).padStart(2, '0')}`;
+    }
+
+    function applyBackground(color) {
+      document.body.style.backgroundColor =
+        color === 'red'
+          ? getComputedStyle(document.documentElement).getPropertyValue('--red').trim()
+          : getComputedStyle(document.documentElement).getPropertyValue('--blue').trim();
+    }
+
+    function getShiftColor() {
+      const elapsed = totalTime - remaining;
+      const shiftIndex = Math.floor(elapsed / shiftPeriod);
+      if (shiftIndex % 2 === 0) return firstColor;
+      return firstColor === 'blue' ? 'red' : 'blue';
+    }
+
+    function getSecondsUntilShiftChange() {
+      const elapsed = totalTime - remaining;
+      return shiftPeriod - (elapsed % shiftPeriod);
+    }
+
+    function updateShiftIndicator(color, secsLeft) {
+      if (!shiftPeriod) return;
+      const countdown = secsLeft != null ? ` — ${secsLeft}s` : '';
+      shiftIndicatorEl.textContent = `${color.toUpperCase()} SHIFT IS ACTIVE${countdown}`;
+      shiftIndicatorEl.classList.remove('hidden');
+    }
+
+    function hideShiftIndicator() {
+      shiftIndicatorEl.classList.add('hidden');
+    }
+
+    // --- State transitions ---
+
+    function enterIdle() {
+      clearInterval(tickInterval);
+      clearTimeout(endHoldTimeout);
+      tickInterval = null;
+      endHoldTimeout = null;
+
+      state = STATES.IDLE;
+      remaining = totalTime;
+
+      timerEl.textContent = formatTime(remaining);
+      labelEl.textContent = '';
+      hintEl.classList.remove('hidden');
+      hideShiftIndicator();
+      applyBackground(firstColor);
+    }
+
+    function enterRunning() {
+      firstColor = Math.random() < 0.5 ? 'red' : 'blue';
+
+      state = STATES.RUNNING;
+      hintEl.classList.add('hidden');
+      labelEl.textContent = '';
+
+      if (shiftPeriod) {
+        const color = getShiftColor();
+        lastShiftColor = color;
+        applyBackground(color);
+        updateShiftIndicator(color, getSecondsUntilShiftChange());
+      } else {
+        applyBackground('blue');
+      }
+
+      playSound(sounds.start);
+
+      tickInterval = setInterval(tick, 1000);
+    }
+
+    function tick() {
+      remaining--;
+
+      if (shiftPeriod) {
+        const color = getShiftColor();
+        if (color !== lastShiftColor) {
+          lastShiftColor = color;
+          playSound(sounds.shiftChange);
+        }
+        applyBackground(color);
+        updateShiftIndicator(color, getSecondsUntilShiftChange());
+      }
+
+      timerEl.textContent = formatTime(remaining);
+
+      if (remaining === 30) {
+        labelEl.textContent = 'ENDGAME';
+        playSound(sounds.warn);
+      }
+
+      if (remaining <= 0) {
+        clearInterval(tickInterval);
+        tickInterval = null;
+        playSound(sounds.end);
+        enterEndHold();
+      }
+    }
+
+    function enterEndHold() {
+      state = STATES.END_HOLD;
+      timerEl.textContent = '0:00';
+      labelEl.textContent = 'MATCH OVER';
+      if (shiftPeriod) updateShiftIndicator(getShiftColor());
+      endHoldTimeout = setTimeout(enterIdle, 30000);
+    }
+
+    // --- Keyboard ---
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.repeat) return;
+      if (state === STATES.IDLE) enterRunning();
+    });
+
+    // --- Session timer ---
+
+    const SESSION_SLOTS = [
+      { label: 'Session 1', start: [10, 30], end: [10, 50] },
+      { label: 'Session 2', start: [11,  0], end: [11, 20] },
+      { label: 'Session 3', start: [12, 30], end: [12, 50] },
+    ];
+
+    const sessionTimerEl = document.getElementById('session-timer');
+
+    function toTodayMs(hour, min) {
+      const d = new Date();
+      d.setHours(hour, min, 0, 0);
+      return d.getTime();
+    }
+
+    function formatCountdown(secs) {
+      if (secs <= 0) return '0:00';
+      const m = Math.floor(secs / 60);
+      const s = secs % 60;
+      return `${m}:${String(s).padStart(2, '0')}`;
+    }
+
+    function setSessionTimerContent(time, label) {
+      sessionTimerEl.innerHTML =
+        `<div class="session-time">${time}</div><div class="session-label">${label}</div>`;
+      sessionTimerEl.classList.remove('hidden');
+    }
+
+    function updateSessionTimer() {
+      const nowMs = Date.now();
+
+      for (let i = 0; i < SESSION_SLOTS.length; i++) {
+        const startMs = toTodayMs(...SESSION_SLOTS[i].start);
+        const endMs   = toTodayMs(...SESSION_SLOTS[i].end);
+
+        if (nowMs < startMs) {
+          const secs = Math.round((startMs - nowMs) / 1000);
+          const label = i === 0 ? 'UNTIL SESSION 1' : 'UNTIL NEXT SESSION';
+          setSessionTimerContent(formatCountdown(secs), label);
+          return;
+        }
+
+        if (nowMs < endMs) {
+          const secs = Math.round((endMs - nowMs) / 1000);
+          setSessionTimerContent(formatCountdown(secs), SESSION_SLOTS[i].label.toUpperCase());
+          return;
+        }
+      }
+
+      // All sessions done — hide
+      sessionTimerEl.classList.add('hidden');
+    }
+
+    setInterval(updateSessionTimer, 1000);
+    updateSessionTimer();
+
+    // --- Init ---
+
+    enterIdle();
+  </script>
+</body>
+</html>
