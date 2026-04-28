@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FRC Match Timer</title>
+  <style>
+    :root {
+      --blue: #1a3afe;
+      --red: #d40000;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Courier New', 'Consolas', monospace;
+      background-color: var(--blue);
+    }
+
+    #container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      width: 100vw;
+      padding-top: 8vh;
+    }
+
+    #timer {
+      font-size: clamp(100px, 28vw, 320px);
+      font-weight: 900;
+      color: #ffffff;
+      letter-spacing: 0.05em;
+      line-height: 1;
+      text-shadow: 0 4px 40px rgba(0, 0, 0, 0.4);
+      font-variant-numeric: tabular-nums;
+    }
+
+    #label {
+      font-size: clamp(24px, 5vw, 72px);
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: 0.2em;
+      margin-top: 1rem;
+      min-height: 1.2em;
+      text-align: center;
+      text-shadow: 0 2px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    #hint {
+      position: fixed;
+      bottom: 2rem;
+      width: 100%;
+      text-align: center;
+      font-size: clamp(14px, 2vw, 28px);
+      color: rgba(255, 255, 255, 0.7);
+      letter-spacing: 0.15em;
+    }
+
+    #hint.hidden { display: none; }
+
+    #shift-indicator {
+      position: fixed;
+      bottom: 2rem;
+      width: 100%;
+      text-align: center;
+      font-size: clamp(16px, 2.5vw, 32px);
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.85);
+      letter-spacing: 0.15em;
+    }
+
+    #shift-indicator.hidden { display: none; }
+
+    #session-timer {
+      position: fixed;
+      top: 1.5rem;
+      right: 2rem;
+      padding: 0.6rem 1.1rem;
+      border: 2px solid rgba(255, 255, 255, 0.85);
+      border-radius: 0.4rem;
+      color: rgba(255, 255, 255, 0.85);
+      text-align: center;
+      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+    }
+
+    #session-timer .session-time {
+      font-size: clamp(29px, 3.6vw, 47px);
+      font-weight: 900;
+      letter-spacing: 0.05em;
+      line-height: 1;
+    }
+
+    #session-timer .session-label {
+      font-size: clamp(14px, 1.6vw, 21px);
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      margin-top: 0.3rem;
+      opacity: 0.8;
+    }
+
+    #session-timer.hidden { display: none; }
+
+    #conn-dot {
+      position: fixed;
+      top: 1.5rem;
+      left: 2rem;
+      font-size: clamp(12px, 1.5vw, 20px);
+      color: rgba(255, 255, 255, 0.4);
+      letter-spacing: 0.1em;
+    }
+
+    body.estop-active {
+      animation: estop-flash 0.5s infinite;
+    }
+
+    @keyframes estop-flash {
+      0%, 100% { background-color: #cc2200; }
+      50%       { background-color: #440000; }
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="timer">--:--</div>
+    <div id="label">CONNECTING...</div>
+  </div>
+  <div id="session-timer" class="hidden"></div>
+  <div id="hint" class="hidden"></div>
+  <div id="shift-indicator" class="hidden"></div>
+  <div id="conn-dot">●</div>
+
+  <script>
+    const timerEl = document.getElementById('timer');
+    const labelEl = document.getElementById('label');
+    const hintEl = document.getElementById('hint');
+    const shiftEl = document.getElementById('shift-indicator');
+    const connDot = document.getElementById('conn-dot');
+
+    // Sounds
+    const sounds = {
+      start: new Audio('/sounds/CHARGE.wav'),
+      warn: new Audio('/sounds/WARNEOM.wav'),
+      end: new Audio('/sounds/ENDMATCH.wav'),
+      shiftChange: new Audio('/sounds/PowerUp_LinearPop.wav'),
+    };
+    Object.values(sounds).forEach(a => { a.preload = 'auto'; });
+
+    function playSound(name) {
+      const a = sounds[name];
+      if (!a) return;
+      a.currentTime = 0;
+      a.play().catch(() => {});
+    }
+
+    let audioCtx = null;
+
+    function getAudioCtx() {
+      if (!audioCtx) audioCtx = new AudioContext();
+      return audioCtx;
+    }
+
+    function playFoghorn() {
+      const ctx = getAudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const t = ctx.currentTime;
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(220, t);
+      osc.frequency.exponentialRampToValueAtTime(90, t + 2.5);
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.8, t + 0.2);
+      gain.gain.setValueAtTime(0.8, t + 2.0);
+      gain.gain.linearRampToValueAtTime(0, t + 2.8);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 3);
+    }
+
+    document.addEventListener('click', () => {
+      getAudioCtx().resume().catch(() => {});
+    }, { once: true });
+
+    function formatTime(s) {
+      const m = Math.floor(s / 60);
+      const sec = s % 60;
+      return `${m}:${String(sec).padStart(2, '0')}`;
+    }
+
+    function applyBg(color) {
+      document.body.classList.remove('estop-active');
+      document.body.style.backgroundColor = color === 'red' ? '#d40000' : '#1a3afe';
+    }
+
+    function handleState(msg) {
+      if (msg.type !== 'state') return;
+      const { state, remaining, shift, nextShiftIn, events, config } = msg;
+
+      for (const ev of events) {
+        switch (ev) {
+          case 'start':      playSound('start'); break;
+          case 'warn':       playSound('warn'); break;
+          case 'end':        playSound('end'); break;
+          case 'shiftChange': playSound('shiftChange'); break;
+          case 'estop':      playFoghorn(); break;
+        }
+      }
+
+      timerEl.textContent = formatTime(remaining);
+
+      switch (state) {
+        case 'idle':
+          applyBg('blue');
+          labelEl.textContent = '';
+          hintEl.textContent = 'WAITING FOR CONTROL';
+          hintEl.classList.remove('hidden');
+          shiftEl.classList.add('hidden');
+          break;
+
+        case 'running':
+          applyBg(shift || 'blue');
+          labelEl.textContent = remaining <= 30 ? 'ENDGAME' : '';
+          hintEl.classList.add('hidden');
+          if (config.shiftTime > 0 && shift) {
+            const countdown = nextShiftIn != null ? ` — ${nextShiftIn}s` : '';
+            shiftEl.textContent = `${shift.toUpperCase()} SHIFT IS ACTIVE${countdown}`;
+            shiftEl.classList.remove('hidden');
+          } else {
+            shiftEl.classList.add('hidden');
+          }
+          break;
+
+        case 'end_hold':
+          applyBg(shift || 'blue');
+          labelEl.textContent = 'MATCH OVER';
+          hintEl.classList.add('hidden');
+          shiftEl.classList.add('hidden');
+          break;
+
+        case 'estop':
+          document.body.classList.add('estop-active');
+          document.body.style.backgroundColor = '';
+          labelEl.textContent = 'E-STOP';
+          hintEl.classList.add('hidden');
+          shiftEl.classList.add('hidden');
+          break;
+      }
+    }
+
+    // WebSocket with auto-reconnect
+    function connect() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+      ws.onopen = () => {
+        connDot.style.color = 'rgba(255,255,255,0.4)';
+      };
+      ws.onmessage = e => handleState(JSON.parse(e.data));
+      ws.onclose = () => {
+        connDot.style.color = 'rgba(255,100,100,0.8)';
+        setTimeout(connect, 2000);
+      };
+      ws.onerror = () => ws.close();
+    }
+
+    connect();
+
+    // Session timer
+    const SESSIONS = [
+      { label: 'Session 1', start: [10, 30], end: [10, 50] },
+      { label: 'Session 2', start: [11,  0], end: [11, 20] },
+      { label: 'Session 3', start: [12, 30], end: [12, 50] },
+    ];
+
+    const sessionEl = document.getElementById('session-timer');
+
+    function todayMs(h, m) {
+      const d = new Date();
+      d.setHours(h, m, 0, 0);
+      return d.getTime();
+    }
+
+    function fmtCd(s) {
+      if (s <= 0) return '0:00';
+      return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    }
+
+    function tickSession() {
+      const now = Date.now();
+      for (let i = 0; i < SESSIONS.length; i++) {
+        const s = todayMs(...SESSIONS[i].start);
+        const e = todayMs(...SESSIONS[i].end);
+        if (now < s) {
+          sessionEl.innerHTML = `<div class="session-time">${fmtCd(Math.round((s - now) / 1000))}</div><div class="session-label">${i === 0 ? 'UNTIL SESSION 1' : 'UNTIL NEXT SESSION'}</div>`;
+          sessionEl.classList.remove('hidden');
+          return;
+        }
+        if (now < e) {
+          sessionEl.innerHTML = `<div class="session-time">${fmtCd(Math.round((e - now) / 1000))}</div><div class="session-label">${SESSIONS[i].label.toUpperCase()}</div>`;
+          sessionEl.classList.remove('hidden');
+          return;
+        }
+      }
+      sessionEl.classList.add('hidden');
+    }
+
+    setInterval(tickSession, 1000);
+    tickSession();
+  </script>
+</body>
+</html>
