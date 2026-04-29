@@ -13,6 +13,7 @@ interface Config {
   transitionTime: number;
   shiftTime: number;
   endgameTime: number;
+  firstShift: 'red' | 'blue' | 'random';
 }
 
 interface WsData {
@@ -38,6 +39,7 @@ const DEFAULT_CONFIG: Config = {
   transitionTime: 10,
   shiftTime: 25,
   endgameTime: 30,
+  firstShift: 'random',
 };
 
 const MIME: Record<string, string> = {
@@ -118,7 +120,10 @@ function enterIdle(session: Session) {
 }
 
 function enterAuto(session: Session) {
-  session.firstColor = Math.random() < 0.5 ? 'red' : 'blue';
+  const pref = session.config.firstShift;
+  session.firstColor = pref === 'random'
+    ? (Math.random() < 0.5 ? 'red' : 'blue')
+    : pref;
   session.period = 'auto';
   session.remaining = session.config.autoTime;
   broadcastSession(session, buildMessage(session, ['autoStart']));
@@ -219,6 +224,8 @@ function handleCommand(ws: ServerWebSocket<WsData>, data: string): void {
       if (isNN(msg.transitionTime)) c.transitionTime = Math.round(msg.transitionTime);
       if (isPos(msg.shiftTime))     c.shiftTime      = Math.round(msg.shiftTime);
       if (isNN(msg.endgameTime))    c.endgameTime    = Math.round(msg.endgameTime);
+      if (msg.firstShift === 'red' || msg.firstShift === 'blue' || msg.firstShift === 'random')
+        c.firstShift = msg.firstShift;
       if (session.period === 'idle') session.remaining = c.autoTime;
       broadcastSession(session, buildMessage(session));
       break;
