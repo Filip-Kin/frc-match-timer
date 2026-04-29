@@ -195,7 +195,7 @@ function enterEstop(session: Session) {
 function isPos(v: unknown): v is number { return typeof v === 'number' && v > 0; }
 function isNN(v: unknown): v is number  { return typeof v === 'number' && v >= 0; }
 
-function handleCommand(ws: ServerWebSocket<WsData>, data: string) {
+function handleCommand(ws: ServerWebSocket<WsData>, data: string): void {
   const session = sessions.get(ws.data.sessionId);
   if (!session || ws.data.role !== 'control') return;
 
@@ -254,9 +254,9 @@ function getOrCreateSession(id: string): Session {
 
 const PUBLIC = join(import.meta.dir, 'public');
 
-serve({
+serve<WsData>({
   port: 3000,
-  fetch(req, server) {
+  async fetch(req, server) {
     const url = new URL(req.url);
 
     if (url.pathname === '/qr') {
@@ -275,11 +275,11 @@ serve({
       if (role === 'display') {
         if (!sessionId || !sessions.has(sessionId)) sessionId = generateId();
         getOrCreateSession(sessionId);
-        if (server.upgrade(req, { data: { sessionId, role } as WsData })) return undefined;
+        if (server.upgrade(req, { data: { sessionId, role } })) return undefined;
       } else {
         if (!sessionId) return new Response('Missing id', { status: 400 });
         getOrCreateSession(sessionId);
-        if (server.upgrade(req, { data: { sessionId, role } as WsData })) return undefined;
+        if (server.upgrade(req, { data: { sessionId, role } })) return undefined;
       }
       return new Response('WebSocket upgrade failed', { status: 400 });
     }
@@ -308,20 +308,18 @@ serve({
   },
   websocket: {
     open(ws) {
-      const typed = ws as ServerWebSocket<WsData>;
-      const session = sessions.get(typed.data.sessionId)!;
-      session.clients.add(typed);
-      if (typed.data.role === 'display') {
-        typed.send(JSON.stringify({ type: 'registered', id: typed.data.sessionId }));
+      const session = sessions.get(ws.data.sessionId)!;
+      session.clients.add(ws);
+      if (ws.data.role === 'display') {
+        ws.send(JSON.stringify({ type: 'registered', id: ws.data.sessionId }));
       }
-      typed.send(buildMessage(session));
+      ws.send(buildMessage(session));
     },
     message(ws, data) {
-      handleCommand(ws as ServerWebSocket<WsData>, String(data));
+      handleCommand(ws, String(data));
     },
     close(ws) {
-      const typed = ws as ServerWebSocket<WsData>;
-      sessions.get(typed.data.sessionId)?.clients.delete(typed);
+      sessions.get(ws.data.sessionId)?.clients.delete(ws);
     },
   },
 });
