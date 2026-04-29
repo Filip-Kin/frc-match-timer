@@ -124,7 +124,6 @@
     <div id="qr-id"></div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
   <script>
     const timerEl = document.getElementById('timer');
     const labelEl = document.getElementById('label');
@@ -264,15 +263,9 @@
     }
 
     function setupQR(id) {
-      if (typeof QRCode === 'undefined') { setTimeout(() => setupQR(id), 100); return; }
-      const url = `https://timer.filipkin.com/control?id=${id}`;
-      QRCode.toDataURL(url, { width: 120, margin: 1 }, function(err, dataUrl) {
-        if (!err) {
-          qrImg.src = dataUrl;
-          qrIdEl.textContent = id.toUpperCase();
-          qrPanel.classList.remove('hidden');
-        }
-      });
+      qrImg.src = `/qr?id=${id}`;
+      qrIdEl.textContent = id.toUpperCase();
+      qrPanel.classList.remove('hidden');
     }
 
     function connect() {

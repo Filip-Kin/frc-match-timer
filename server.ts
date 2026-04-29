@@ -1,6 +1,7 @@
 import { serve, ServerWebSocket } from 'bun';
 import { statSync } from 'fs';
 import { join, extname } from 'path';
+import QRCode from 'qrcode';
 
 type Color = 'blue' | 'red';
 type ShiftColor = 'blue' | 'red' | 'purple' | null;
@@ -257,6 +258,15 @@ serve({
   port: 3000,
   fetch(req, server) {
     const url = new URL(req.url);
+
+    if (url.pathname === '/qr') {
+      const id = (url.searchParams.get('id') ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (!id) return new Response('Missing id', { status: 400 });
+      const svg = await QRCode.toString(`https://timer.filipkin.com/control?id=${id}`, {
+        type: 'svg', margin: 1, width: 120,
+      });
+      return new Response(svg, { headers: { 'Content-Type': 'image/svg+xml' } });
+    }
 
     if (url.pathname === '/ws') {
       const role = (url.searchParams.get('role') ?? 'control') as 'display' | 'control';

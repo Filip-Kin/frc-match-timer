@@ -1,5 +1,11 @@
 {
   "name": "frc-match-timer",
   "version": "2.0.0",
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.6"
+  }
 }
