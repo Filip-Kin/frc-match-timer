@@ -312,8 +312,17 @@ serve<WsData>({
       session.clients.add(ws);
       if (ws.data.role === 'display') {
         ws.send(JSON.stringify({ type: 'registered', id: ws.data.sessionId }));
+        ws.send(buildMessage(session));
+      } else {
+        // Notify display clients that a controller is now connected
+        const note = JSON.stringify({ type: 'control_connected' });
+        for (const client of session.clients) {
+          if (client !== ws && client.data.role === 'display') {
+            try { client.send(note); } catch {}
+          }
+        }
+        ws.send(buildMessage(session));
       }
-      ws.send(buildMessage(session));
     },
     message(ws, data) {
       handleCommand(ws, String(data));

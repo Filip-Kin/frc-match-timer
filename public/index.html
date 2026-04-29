@@ -92,6 +92,7 @@
       border-radius: 6px;
       text-align: center;
       opacity: 0.88;
+      transition: opacity 2s ease;
     }
     #qr-panel.hidden { display: none; }
 
@@ -103,6 +104,24 @@
       letter-spacing: 0.18em;
       margin-top: 4px;
     }
+
+    #audio-overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.65);
+      z-index: 100;
+      cursor: pointer;
+    }
+    #audio-overlay span {
+      font-size: clamp(18px, 3.5vw, 42px);
+      font-weight: 700;
+      color: rgba(255,255,255,0.9);
+      letter-spacing: 0.2em;
+    }
+    #audio-overlay.hidden { display: none; }
 
     body.estop-active { animation: estop-flash 0.5s infinite; }
     @keyframes estop-flash {
@@ -123,62 +142,73 @@
     <img id="qr-img" width="120" height="120" alt="QR">
     <div id="qr-id"></div>
   </div>
+  <div id="audio-overlay">
+    <span>TAP TO ENABLE AUDIO</span>
+  </div>
 
   <script>
-    const timerEl = document.getElementById('timer');
-    const labelEl = document.getElementById('label');
-    const hintEl  = document.getElementById('hint');
-    const shiftEl = document.getElementById('shift-indicator');
-    const connDot = document.getElementById('conn-dot');
-    const qrPanel = document.getElementById('qr-panel');
-    const qrImg   = document.getElementById('qr-img');
-    const qrIdEl  = document.getElementById('qr-id');
+    const timerEl  = document.getElementById('timer');
+    const labelEl  = document.getElementById('label');
+    const hintEl   = document.getElementById('hint');
+    const shiftEl  = document.getElementById('shift-indicator');
+    const connDot  = document.getElementById('conn-dot');
+    const qrPanel  = document.getElementById('qr-panel');
+    const qrImg    = document.getElementById('qr-img');
+    const qrIdEl   = document.getElementById('qr-id');
+    const overlay  = document.getElementById('audio-overlay');
 
-    const sounds = {
-      autoStart:   new Audio('/sounds/CHARGE.wav'),
-      autoEnd:     new Audio('/sounds/ENDMATCH.wav'),
-      teleopStart: new Audio('/sounds/3BELLS.wav'),
-      warn:        new Audio('/sounds/WARNEOM.wav'),
-      end:         new Audio('/sounds/ENDMATCH.wav'),
-      shiftChange: new Audio('/sounds/PowerUp_LinearPop.wav'),
-    };
-    Object.values(sounds).forEach(a => { a.preload = 'auto'; });
+    // ── Audio (AudioContext so sounds work reliably after one user tap) ──
+    const audioCtx = new AudioContext();
+    const buffers  = {};
+
+    async function loadBuffer(name, url) {
+      try {
+        const res = await fetch(url);
+        buffers[name] = await audioCtx.decodeAudioData(await res.arrayBuffer());
+      } catch {}
+    }
+
+    loadBuffer('autoStart',   '/sounds/CHARGE.wav');
+    loadBuffer('autoEnd',     '/sounds/ENDMATCH.wav');
+    loadBuffer('teleopStart', '/sounds/3BELLS.wav');
+    loadBuffer('warn',        '/sounds/WARNEOM.wav');
+    loadBuffer('end',         '/sounds/ENDMATCH.wav');
+    loadBuffer('shiftChange', '/sounds/PowerUp_LinearPop.wav');
+    loadBuffer('estop',       '/sounds/FOGHORN.wav');
 
     function playSound(name) {
-      const a = sounds[name];
-      if (!a) return;
-      a.currentTime = 0;
-      a.play().catch(() => {});
+      const buf = buffers[name];
+      if (!buf || audioCtx.state !== 'running') return;
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(audioCtx.destination);
+      src.start();
     }
 
-    let audioCtx = null;
-    function getAudioCtx() {
-      if (!audioCtx) audioCtx = new AudioContext();
-      return audioCtx;
-    }
-
-    function playFoghorn() {
-      const ctx = getAudioCtx();
-      const osc  = ctx.createOscillator();
-      const gain = ctx.createGain();
-      const t = ctx.currentTime;
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(220, t);
-      osc.frequency.exponentialRampToValueAtTime(90, t + 2.5);
-      gain.gain.setValueAtTime(0, t);
-      gain.gain.linearRampToValueAtTime(0.8, t + 0.2);
-      gain.gain.setValueAtTime(0.8, t + 2.0);
-      gain.gain.linearRampToValueAtTime(0, t + 2.8);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(t);
-      osc.stop(t + 3);
-    }
-
-    document.addEventListener('click', () => {
-      getAudioCtx().resume().catch(() => {});
+    overlay.addEventListener('click', () => {
+      audioCtx.resume().then(() => overlay.classList.add('hidden')).catch(() => {});
     }, { once: true });
 
+    // ── QR fade ──
+    let qrFadeTimer = null;
+
+    function startQrFade() {
+      clearTimeout(qrFadeTimer);
+      qrFadeTimer = setTimeout(() => { qrPanel.style.opacity = '0'; }, 10_000);
+    }
+
+    function revealQr() {
+      if (qrPanel.classList.contains('hidden')) return;
+      clearTimeout(qrFadeTimer);
+      qrPanel.style.opacity = '0.88';
+    }
+
+    document.addEventListener('mousemove', () => {
+      revealQr();
+      startQrFade();
+    });
+
+    // ── Helpers ──
     function formatTime(s) {
       return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
     }
@@ -189,6 +219,7 @@
       document.body.style.backgroundColor = map[shift] ?? '#1a3afe';
     }
 
+    // ── State handler ──
     function handleState(msg) {
       if (msg.type !== 'state') return;
       const { period, remaining, shift, isEndgame, nextChangeIn, events } = msg;
@@ -200,7 +231,7 @@
         if (ev === 'warn')        playSound('warn');
         if (ev === 'end')         playSound('end');
         if (ev === 'shiftChange') playSound('shiftChange');
-        if (ev === 'estop')       playFoghorn();
+        if (ev === 'estop')       playSound('estop');
       }
 
       timerEl.textContent = formatTime(remaining);
@@ -215,7 +246,7 @@
           break;
 
         case 'auto':
-          applyBg(null);
+          applyBg('purple');
           labelEl.textContent = 'AUTO';
           hintEl.classList.add('hidden');
           shiftEl.classList.add('hidden');
@@ -262,12 +293,14 @@
       }
     }
 
+    // ── QR setup ──
     function setupQR(id) {
       qrImg.src = `/qr?id=${id}`;
       qrIdEl.textContent = id.toUpperCase();
       qrPanel.classList.remove('hidden');
     }
 
+    // ── WebSocket ──
     function connect() {
       const storedId = localStorage.getItem('timerId');
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -281,6 +314,8 @@
         if (msg.type === 'registered') {
           localStorage.setItem('timerId', msg.id);
           setupQR(msg.id);
+        } else if (msg.type === 'control_connected') {
+          startQrFade();
         } else {
           handleState(msg);
         }
